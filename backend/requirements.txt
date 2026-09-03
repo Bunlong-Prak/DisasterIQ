@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+httpx
+gdacs-api
+langchain
+langchain-groq
+langchain-community
+neo4j
+supabase
+apscheduler
