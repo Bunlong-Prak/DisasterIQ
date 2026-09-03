@@ -1,6 +1,6 @@
-# DisasterIQ — AI Disaster Intelligence Platform
+# DisasterIQ AI Disaster Intelligence Platform
 
-AI-driven disaster and emergency management platform built for ASU CS Research Assistant application.
+So basically this project is created and done for AI research driven disaster and emergency management platform built for CS Research proposal.
 
 ## What It Does
 
@@ -10,7 +10,7 @@ AI-driven disaster and emergency management platform built for ASU CS Research A
 - Real-time alert polling: GDACS updates every 6 minutes, dashboard shows new events
 - Explainable outputs: each AI answer shows which graph nodes and relationships it used
 
-## Stack
+## My tool Stack
 
 | Layer | Tool |
 |-------|------|
@@ -37,5 +37,6 @@ AI-driven disaster and emergency management platform built for ASU CS Research A
 
 ## Related Research Position
 
-ASU Computer Science — Research Assistant, AI Driven Disaster and Emergency Management System
-Supervisor: Dr. Erdogan Dogdu (erdogan.dogdu@angelo.edu)
+Computer Science Research Assistant, AI Driven Disaster and Emergency Management System
+Owner: MSc. Bunlong Prak (prakbunlong53@gmail.com)
+Supervisor: Dr. Erdogan
