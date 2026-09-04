@@ -95,7 +95,7 @@ Relationships: (Disaster)-[:OCCURRED_IN]->(Location), (Alert)-[:LOCATED_IN]->(Lo
 def ask(question):
     groq = get_groq()
     cypher_resp = groq.chat.completions.create(
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": f"""You are a Neo4j Cypher expert. Write a Cypher query for this question. Return ONLY the query, no explanation.
 
 Schema: {SCHEMA}
@@ -110,7 +110,7 @@ Cypher:"""}],
         return f"Query error: {e}", cypher, []
 
     answer_resp = groq.chat.completions.create(
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": f"Question: {question}\nData: {str(data)}\nWrite a clear, concise answer:"}],
         temperature=0,
     )
