@@ -88,24 +88,53 @@ def ingest_fema():
             )
     return len(records)
 
-SCHEMA = "Nodes: Disaster(id,type,title,state,date,source), Alert(id,type,name,severity,country,lat,lon,date,source), Location(name). Relationships: (Disaster)-[:OCCURRED_IN]->(Location), (Alert)-[:LOCATED_IN]->(Location)"
+SCHEMA = """
+Nodes:
+- Disaster(id, type, title, state, date, source)
+  - type examples: 'Fire', 'Flood', 'Tropical Storm', 'Severe Storm'
+  - state examples: 'TX', 'CA', 'FL', 'IN', 'AK' (US state abbreviations)
+  - date format: '2026-08-25T00:00:00.000Z'
+  - source: 'FEMA'
+- Alert(id, type, name, severity, country, lat, lon, date, source)
+  - type examples: 'EQ' (earthquake), 'TC' (tropical cyclone), 'FL' (flood)
+  - severity examples: 'Green', 'Orange', 'Red'
+  - country examples: 'United States', 'Japan', 'Mexico'
+  - source: 'GDACS'
+- Location(name) — connected to both Disaster and Alert nodes
 
-MODEL = "qwen/qwen3.6-27b"
+Relationships:
+- (Disaster)-[:OCCURRED_IN]->(Location) where Location.name = US state abbreviation
+- (Alert)-[:LOCATED_IN]->(Location) where Location.name = country name
+"""
+
+MODEL = "openai/gpt-oss-20b"
+
+def clean_cypher(raw: str) -> str:
+    # Remove <think>...</think> blocks (reasoning models)
+    cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
+    # Remove markdown code fences
+    cleaned = re.sub(r"```(?:cypher)?", "", cleaned)
+    return cleaned.strip()
 
 def ask(question):
     client = get_groq()
+    system_prompt = (
+        "You are a Neo4j Cypher expert. "
+        "Given a schema and a question, write a valid Cypher query to answer it. "
+        "Return ONLY the Cypher query — no markdown, no explanation, no code fences, no thinking. "
+        "The query must start with MATCH, RETURN, or WITH."
+    )
     try:
         cypher_resp = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a Neo4j Cypher expert. Given a schema and question, return only a valid Cypher query. No markdown, no explanation."},
-                {"role": "user", "content": f"Schema: {SCHEMA}\nQuestion: {question}"}
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Schema:\n{SCHEMA}\n\nQuestion: {question}\n\nCypher query:"}
             ],
             temperature=0,
         )
         raw = cypher_resp.choices[0].message.content.strip()
-        # strip <think>...</think> blocks from reasoning models
-        cypher = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        cypher = clean_cypher(raw)
     except Exception as e:
         return f"Groq error: {str(e)}", "", []
 
@@ -118,12 +147,13 @@ def ask(question):
         answer_resp = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "Answer the user question clearly based on the data provided."},
-                {"role": "user", "content": f"Question: {question}\nData: {str(data[:10])}"}
+                {"role": "system", "content": "Answer the user's question clearly and concisely based on the data provided. If data is empty, say no results were found."},
+                {"role": "user", "content": f"Question: {question}\nData from database: {str(data[:10])}"}
             ],
             temperature=0,
         )
-        return answer_resp.choices[0].message.content.strip(), cypher, data
+        answer = re.sub(r"<think>.*?</think>", "", answer_resp.choices[0].message.content, flags=re.DOTALL).strip()
+        return answer, cypher, data
     except Exception as e:
         return str(data), cypher, data
 
