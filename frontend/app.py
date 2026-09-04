@@ -1,4 +1,5 @@
 import os
+import re
 import streamlit as st
 from neo4j import GraphDatabase
 from groq import Groq
@@ -102,7 +103,9 @@ def ask(question):
             ],
             temperature=0,
         )
-        cypher = cypher_resp.choices[0].message.content.strip()
+        raw = cypher_resp.choices[0].message.content.strip()
+        # strip <think>...</think> blocks from reasoning models
+        cypher = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
     except Exception as e:
         return f"Groq error: {str(e)}", "", []
 
