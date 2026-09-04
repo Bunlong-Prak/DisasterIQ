@@ -5,7 +5,7 @@ from groq import Groq
 from gdacs.api import GDACSAPIReader
 import httpx
 
-st.set_page_config(page_title="DisasterIQ", page_icon="🚨", layout="wide")
+st.set_page_config(page_title="DisasterIQ", layout="wide")
 
 # Connections
 @st.cache_resource
@@ -119,7 +119,7 @@ Cypher:"""}],
 
 # UI
 st.title("DisasterIQ")
-st.caption("AI-powered disaster intelligence, Knowledge Graph + LLM")
+st.caption("Disaster intelligence platform, Knowledge Graph + natural language queries")
 
 col1, col2 = st.columns([3, 1])
 with col2:
@@ -129,7 +129,7 @@ with col2:
             f = ingest_fema()
             st.success(f"Loaded {g} GDACS alerts + {f} FEMA disasters")
 
-tab1, tab2 = st.tabs(["Live Data", "Ask AI"])
+tab1, tab2 = st.tabs(["Live Data", "Query"])
 
 with tab1:
     col_a, col_b = st.columns(2)
@@ -157,14 +157,14 @@ with tab1:
             st.info("No disasters yet. Click Refresh Data.")
 
 with tab2:
-    st.subheader("Ask about disasters")
-    st.caption("Powered by Groq LLaMA3 + Neo4j Knowledge Graph")
+    st.subheader("Query the disaster database")
+    st.caption("Ask in plain English. The system generates a graph query and returns results.")
     question = st.text_input("Question", placeholder="What disasters hit Texas recently? Which countries had red alerts?")
     if question:
-        with st.spinner("Thinking..."):
+        with st.spinner("Running..."):
             answer, cypher, context = ask(question)
-        st.markdown("### Answer")
+        st.markdown("### Result")
         st.write(answer)
-        with st.expander("How it reasoned (XAI — Explainable AI)"):
+        with st.expander("Query details"):
             st.code(cypher, language="cypher")
             st.json(context)
