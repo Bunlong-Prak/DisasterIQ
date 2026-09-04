@@ -87,34 +87,42 @@ def ingest_fema():
             )
     return len(records)
 
-SCHEMA = """
-Nodes: Disaster {id, type, title, state, date, source}, Alert {id, type, name, severity, country, lat, lon, date, source}, Location {name}
-Relationships: (Disaster)-[:OCCURRED_IN]->(Location), (Alert)-[:LOCATED_IN]->(Location)
-"""
+SCHEMA = "Nodes: Disaster(id,type,title,state,date,source), Alert(id,type,name,severity,country,lat,lon,date,source), Location(name). Relationships: (Disaster)-[:OCCURRED_IN]->(Location), (Alert)-[:LOCATED_IN]->(Location)"
+
+MODEL = "gemma2-9b-it"
 
 def ask(question):
-    groq = get_groq()
-    cypher_resp = groq.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=[{"role": "user", "content": f"""You are a Neo4j Cypher expert. Write a Cypher query for this question. Return ONLY the query, no explanation.
+    client = get_groq()
+    try:
+        cypher_resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": "You are a Neo4j Cypher expert. Given a schema and question, return only a valid Cypher query. No markdown, no explanation."},
+                {"role": "user", "content": f"Schema: {SCHEMA}\nQuestion: {question}"}
+            ],
+            temperature=0,
+        )
+        cypher = cypher_resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"Groq error: {str(e)}", "", []
 
-Schema: {SCHEMA}
-Question: {question}
-Cypher:"""}],
-        temperature=0,
-    )
-    cypher = cypher_resp.choices[0].message.content.strip()
     try:
         data = run_cypher(cypher)
     except Exception as e:
-        return f"Query error: {e}", cypher, []
+        return f"Cypher error: {str(e)}", cypher, []
 
-    answer_resp = groq.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=[{"role": "user", "content": f"Question: {question}\nData: {str(data)}\nWrite a clear, concise answer:"}],
-        temperature=0,
-    )
-    return answer_resp.choices[0].message.content.strip(), cypher, data
+    try:
+        answer_resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": "Answer the user question clearly based on the data provided."},
+                {"role": "user", "content": f"Question: {question}\nData: {str(data[:10])}"}
+            ],
+            temperature=0,
+        )
+        return answer_resp.choices[0].message.content.strip(), cypher, data
+    except Exception as e:
+        return str(data), cypher, data
 
 
 # UI
