@@ -89,7 +89,7 @@ def ingest_fema():
 
 SCHEMA = "Nodes: Disaster(id,type,title,state,date,source), Alert(id,type,name,severity,country,lat,lon,date,source), Location(name). Relationships: (Disaster)-[:OCCURRED_IN]->(Location), (Alert)-[:LOCATED_IN]->(Location)"
 
-MODEL = "gemma2-9b-it"
+MODEL = "qwen/qwen3.6-27b"
 
 def ask(question):
     client = get_groq()
