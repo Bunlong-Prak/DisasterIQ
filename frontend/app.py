@@ -120,9 +120,14 @@ def ask(question):
     client = get_groq()
     system_prompt = (
         "You are a Neo4j Cypher expert. "
-        "Given a schema and a question, write a valid Cypher query to answer it. "
-        "Return ONLY the Cypher query — no markdown, no explanation, no code fences, no thinking. "
-        "The query must start with MATCH, RETURN, or WITH."
+        "Write a valid Cypher query to answer the question. "
+        "Rules:\n"
+        "- Return ONLY the Cypher query. No markdown, no explanation, no code fences.\n"
+        "- Never use date() or datetime() functions — all data is already recent, no date filtering needed.\n"
+        "- All Disaster nodes are US-based (FEMA data). For US disaster questions, just query Disaster nodes.\n"
+        "- Alert nodes are global events (GDACS). For global/world questions, query Alert nodes.\n"
+        "- Keep queries simple. Avoid chaining methods on properties.\n"
+        "- The query must start with MATCH."
     )
     try:
         cypher_resp = client.chat.completions.create(
