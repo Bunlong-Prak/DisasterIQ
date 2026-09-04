@@ -1,54 +1,170 @@
+import os
 import streamlit as st
+from neo4j import GraphDatabase
+from groq import Groq
+from gdacs.api import GDACSAPIReader
 import httpx
-import pandas as pd
-
-API_BASE = "http://localhost:8000"
 
 st.set_page_config(page_title="DisasterIQ", page_icon="🚨", layout="wide")
-st.title("DisasterIQ — AI Disaster Intelligence Platform")
 
-tab1, tab2 = st.tabs(["Live Alerts", "Ask the AI"])
-
-with tab1:
-    st.subheader("Recent Global Alerts")
-    try:
-        resp = httpx.get(f"{API_BASE}/alerts/recent", timeout=10)
-        alerts = resp.json()
-        if alerts:
-            df = pd.DataFrame([a["a"] for a in alerts])
-            st.dataframe(df, use_container_width=True)
-            # Map if lat/lon available
-            map_df = df.dropna(subset=["lat", "lon"])
-            if not map_df.empty:
-                st.map(map_df.rename(columns={"lat": "latitude", "lon": "longitude"}))
-        else:
-            st.info("No alerts loaded yet. Data ingestion runs on startup.")
-    except Exception as e:
-        st.error(f"Could not reach API: {e}")
-
-with tab2:
-    st.subheader("Ask About Disasters")
-    st.caption("Powered by Groq LLaMA3 + Neo4j Knowledge Graph")
-
-    question = st.text_input(
-        "Ask a question",
-        placeholder="What disasters hit Texas in the last year? Which countries had the most red alerts?",
+# Connections
+@st.cache_resource
+def get_neo4j():
+    return GraphDatabase.driver(
+        st.secrets["NEO4J_URI"],
+        auth=(st.secrets["NEO4J_USER"], st.secrets["NEO4J_PASSWORD"])
     )
 
+@st.cache_resource
+def get_groq():
+    return Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+def run_cypher(query, params={}):
+    driver = get_neo4j()
+    with driver.session() as session:
+        result = session.run(query, **params)
+        return [record.data() for record in result]
+
+def ingest_gdacs():
+    client = GDACSAPIReader()
+    events = client.latest_events()
+    features = events.features if hasattr(events, 'features') else events.get('features', [])
+    driver = get_neo4j()
+    count = 0
+    with driver.session() as session:
+        for event in features:
+            if isinstance(event, dict):
+                props = event.get("properties", {})
+                geometry = event.get("geometry", {})
+                coords = geometry.get("coordinates", [None, None]) if geometry else [None, None]
+                lat = coords[1] if len(coords) > 1 else None
+                lon = coords[0] if len(coords) > 0 else None
+            else:
+                props = event.properties
+                lat = event.geometry.coordinates[1] if event.geometry else None
+                lon = event.geometry.coordinates[0] if event.geometry else None
+            session.run("""
+                MERGE (a:Alert {id: $id})
+                SET a.type=$type, a.name=$name, a.severity=$severity,
+                    a.country=$country, a.lat=$lat, a.lon=$lon,
+                    a.date=$date, a.source='GDACS'
+                MERGE (l:Location {name: $country})
+                MERGE (a)-[:LOCATED_IN]->(l)
+            """,
+                id=str(props.get("eventid", "")),
+                type=props.get("eventtype", ""),
+                name=props.get("name", ""),
+                severity=props.get("alertlevel", ""),
+                country=props.get("country", ""),
+                lat=lat, lon=lon,
+                date=str(props.get("fromdate", ""))
+            )
+            count += 1
+    return count
+
+def ingest_fema():
+    resp = httpx.get(
+        "https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries",
+        params={"$top": 50, "$orderby": "declarationDate desc"},
+        timeout=30,
+    )
+    records = resp.json().get("DisasterDeclarationsSummaries", [])
+    driver = get_neo4j()
+    with driver.session() as session:
+        for r in records:
+            session.run("""
+                MERGE (d:Disaster {id: $id})
+                SET d.type=$type, d.title=$title, d.state=$state,
+                    d.date=$date, d.source='FEMA'
+                MERGE (l:Location {name: $state})
+                MERGE (d)-[:OCCURRED_IN]->(l)
+            """,
+                id=str(r.get("disasterNumber", "")),
+                type=r.get("incidentType", ""),
+                title=r.get("declarationTitle", ""),
+                state=r.get("state", ""),
+                date=str(r.get("declarationDate", ""))
+            )
+    return len(records)
+
+SCHEMA = """
+Nodes: Disaster {id, type, title, state, date, source}, Alert {id, type, name, severity, country, lat, lon, date, source}, Location {name}
+Relationships: (Disaster)-[:OCCURRED_IN]->(Location), (Alert)-[:LOCATED_IN]->(Location)
+"""
+
+def ask(question):
+    groq = get_groq()
+    cypher_resp = groq.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": f"""You are a Neo4j Cypher expert. Write a Cypher query for this question. Return ONLY the query, no explanation.
+
+Schema: {SCHEMA}
+Question: {question}
+Cypher:"""}],
+        temperature=0,
+    )
+    cypher = cypher_resp.choices[0].message.content.strip()
+    try:
+        data = run_cypher(cypher)
+    except Exception as e:
+        return f"Query error: {e}", cypher, []
+
+    answer_resp = groq.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=[{"role": "user", "content": f"Question: {question}\nData: {str(data)}\nWrite a clear, concise answer:"}],
+        temperature=0,
+    )
+    return answer_resp.choices[0].message.content.strip(), cypher, data
+
+
+# UI
+st.title("DisasterIQ")
+st.caption("AI-powered disaster intelligence, Knowledge Graph + LLM")
+
+col1, col2 = st.columns([3, 1])
+with col2:
+    if st.button("Refresh Data", type="primary"):
+        with st.spinner("Ingesting..."):
+            g = ingest_gdacs()
+            f = ingest_fema()
+            st.success(f"Loaded {g} GDACS alerts + {f} FEMA disasters")
+
+tab1, tab2 = st.tabs(["Live Data", "Ask AI"])
+
+with tab1:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.subheader("GDACS Alerts")
+        alerts = run_cypher(
+            "MATCH (a:Alert) RETURN a.name AS name, a.type AS type, a.severity AS severity, a.country AS country, a.date AS date ORDER BY a.date DESC LIMIT 15"
+        )
+        if alerts:
+            st.dataframe(alerts, use_container_width=True)
+            map_data = run_cypher("MATCH (a:Alert) WHERE a.lat IS NOT NULL RETURN a.lat AS latitude, a.lon AS longitude, a.name AS name LIMIT 50")
+            if map_data:
+                st.map(map_data)
+        else:
+            st.info("No alerts yet. Click Refresh Data.")
+
+    with col_b:
+        st.subheader("FEMA Disasters")
+        disasters = run_cypher(
+            "MATCH (d:Disaster) RETURN d.title AS title, d.type AS type, d.state AS state, d.date AS date ORDER BY d.date DESC LIMIT 15"
+        )
+        if disasters:
+            st.dataframe(disasters, use_container_width=True)
+        else:
+            st.info("No disasters yet. Click Refresh Data.")
+
+with tab2:
+    st.subheader("Ask about disasters")
+    st.caption("Powered by Groq LLaMA3 + Neo4j Knowledge Graph")
+    question = st.text_input("Question", placeholder="What disasters hit Texas recently? Which countries had red alerts?")
     if question:
         with st.spinner("Thinking..."):
-            try:
-                resp = httpx.post(
-                    f"{API_BASE}/chat/",
-                    json={"question": question},
-                    timeout=30,
-                )
-                data = resp.json()
-                st.markdown("### Answer")
-                st.write(data["answer"])
-
-                with st.expander("How it reasoned (XAI)"):
-                    st.code(data.get("cypher_query", ""), language="cypher")
-                    st.json(data.get("context", []))
-            except Exception as e:
-                st.error(f"Error: {e}")
+            answer, cypher, context = ask(question)
+        st.markdown("### Answer")
+        st.write(answer)
+        with st.expander("How it reasoned (XAI — Explainable AI)"):
+            st.code(cypher, language="cypher")
+            st.json(context)
